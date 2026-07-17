@@ -1,6 +1,5 @@
 #!/bin/bash
 # Grant SELECT on routing objects to the Postfix lookup user (MYSQL_USER).
-# Runs after 01-schema.sql on first volume initialization only.
 set -euo pipefail
 
 : "${MYSQL_USER:=postfix}"
