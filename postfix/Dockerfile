@@ -66,8 +66,7 @@ RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh /usr/local/bin/healthcheck.sh 
  && chown -R root:root /etc/postfix \
  && printf 'postmaster: root\n' > /etc/aliases \
  && newaliases \
- && # Disable default rsyslog imklog noise in containers
-    rm -f /etc/rsyslog.d/50-default.conf 2>/dev/null || true
+ && rm -f /etc/rsyslog.d/50-default.conf 2>/dev/null || true
 
 EXPOSE 25 587
 
