@@ -1,0 +1,8 @@
+# MariaDB map: domains we are authorized to relay for
+# Derived from email addresses in the routing table
+
+user = __MYSQL_USER__
+password = __MYSQL_PASSWORD__
+hosts = __MYSQL_HOST__:__MYSQL_PORT__
+dbname = __MYSQL_DATABASE__
+query = SELECT 1 FROM routing WHERE enabled = 1 AND LOWER(SUBSTRING_INDEX(email, '@', -1)) = LOWER('%s') LIMIT 1

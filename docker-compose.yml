@@ -1,0 +1,183 @@
+# =============================================================================
+# Hybrid Mail Router — Docker Compose (production)
+# Stack: Postfix (Ubuntu) + MariaDB + Adminer
+# Role: SMTP receive & relay only — NO local mailboxes
+# =============================================================================
+
+name: hybrid-mail-router
+
+services:
+  mariadb:
+    image: mariadb:11.4
+    container_name: mail-router-mariadb
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-mailrouter}
+      MYSQL_USER: ${MYSQL_USER:-postfix}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MARIADB_AUTO_UPGRADE: "1"
+      TZ: ${TZ:-UTC}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --max-connections=200
+      - --innodb-buffer-pool-size=256M
+      - --innodb-flush-log-at-trx-commit=1
+      - --sync-binlog=1
+      - --log-bin=mysql-bin
+      - --binlog-format=ROW
+      - --expire-logs-days=7
+      - --slow-query-log=1
+      - --slow-query-log-file=/var/log/mysql/slow.log
+      - --long-query-time=2
+      - --log-error=/var/log/mysql/error.log
+    volumes:
+      - mariadb_data:/var/lib/mysql
+      - mariadb_logs:/var/log/mysql
+      - ./mariadb/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      mailnet:
+        ipv4_address: 172.28.0.10
+    ports:
+      # Bind to localhost only — use Adminer or SSH tunnel in production
+      - "${MYSQL_PUBLISH_PORT:-127.0.0.1:3306}:3306"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+        tag: "{{.Name}}"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+
+  postfix:
+    build:
+      context: ./postfix
+      dockerfile: Dockerfile
+    image: hybrid-mail-router/postfix:1.0.0
+    container_name: mail-router-postfix
+    restart: unless-stopped
+    hostname: ${POSTFIX_HOSTNAME:-mail-router.local}
+    domainname: ${POSTFIX_DOMAIN:-local}
+    env_file:
+      - .env
+    environment:
+      MYSQL_HOST: mariadb
+      MYSQL_PORT: 3306
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-mailrouter}
+      MYSQL_USER: ${MYSQL_USER:-postfix}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      POSTFIX_HOSTNAME: ${POSTFIX_HOSTNAME:-mail-router.local}
+      POSTFIX_DOMAIN: ${POSTFIX_DOMAIN:-local}
+      POSTFIX_MYNETWORKS: ${POSTFIX_MYNETWORKS:-127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,172.28.0.0/16}
+      POSTFIX_SMTPD_BANNER: ${POSTFIX_SMTPD_BANNER:-Hybrid Mail Router ESMTP}
+      POSTFIX_MESSAGE_SIZE_LIMIT: ${POSTFIX_MESSAGE_SIZE_LIMIT:-52428800}
+      POSTFIX_TLS_ENABLED: ${POSTFIX_TLS_ENABLED:-yes}
+      MYSQL_WAIT_TIMEOUT: ${MYSQL_WAIT_TIMEOUT:-120}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - postfix_spool:/var/spool/postfix
+      - postfix_logs:/var/log/mail
+      - ./certs:/etc/postfix/certs
+      - ./logs/postfix:/var/log/supervisor
+    ports:
+      - "${SMTP_PORT:-25}:25"
+      - "${SUBMISSION_PORT:-587}:587"
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    networks:
+      mailnet:
+        ipv4_address: 172.28.0.20
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "10"
+        tag: "{{.Name}}"
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+        reservations:
+          cpus: "0.5"
+          memory: 256M
+    # Extra hosts for on-prem backends by name (optional)
+    extra_hosts:
+      - "carbonio-mta:${CARBONIO_MTA_IP:-172.20.0.10}"
+
+  adminer:
+    image: adminer:4.8.1
+    container_name: mail-router-adminer
+    restart: unless-stopped
+    environment:
+      ADMINER_DEFAULT_SERVER: mariadb
+      ADMINER_DESIGN: pepa-linha-dark
+      TZ: ${TZ:-UTC}
+    ports:
+      # Localhost only by default
+      - "${ADMINER_PUBLISH_PORT:-127.0.0.1:8080}:8080"
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    networks:
+      mailnet:
+        ipv4_address: 172.28.0.30
+    healthcheck:
+      test: ["CMD", "php", "-r", "fsockopen('127.0.0.1', 8080) or exit(1);"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+        tag: "{{.Name}}"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+
+networks:
+  mailnet:
+    name: mail-router-net
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+          gateway: 172.28.0.1
+
+volumes:
+  mariadb_data:
+    name: mail-router-mariadb-data
+  mariadb_logs:
+    name: mail-router-mariadb-logs
+  postfix_spool:
+    name: mail-router-postfix-spool
+  postfix_logs:
+    name: mail-router-postfix-logs

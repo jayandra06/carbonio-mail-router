@@ -1,0 +1,19 @@
+# Secrets
+.env
+*.pem
+*.key
+!certs/.gitkeep
+
+# Runtime / local overrides
+logs/
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# Docker
+.docker/

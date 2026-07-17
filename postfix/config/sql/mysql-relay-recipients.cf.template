@@ -1,0 +1,8 @@
+# MariaDB map: recipient must exist in routing table
+# Returns any non-empty value to accept the recipient
+
+user = __MYSQL_USER__
+password = __MYSQL_PASSWORD__
+hosts = __MYSQL_HOST__:__MYSQL_PORT__
+dbname = __MYSQL_DATABASE__
+query = SELECT 1 FROM routing WHERE enabled = 1 AND LOWER(email) = LOWER('%s') LIMIT 1

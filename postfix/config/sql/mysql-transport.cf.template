@@ -1,0 +1,9 @@
+# MariaDB map: per-recipient SMTP transport
+# Returns: smtp:[host]:port  (Postfix transport_maps format)
+# Placeholders __MYSQL_*__ replaced by entrypoint.sh
+
+user = __MYSQL_USER__
+password = __MYSQL_PASSWORD__
+hosts = __MYSQL_HOST__:__MYSQL_PORT__
+dbname = __MYSQL_DATABASE__
+query = SELECT CONCAT('smtp:[', host, ']:', CAST(port AS CHAR)) FROM routing WHERE enabled = 1 AND LOWER(email) = LOWER('%s') LIMIT 1

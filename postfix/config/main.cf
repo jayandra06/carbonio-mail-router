@@ -1,0 +1,149 @@
+# =============================================================================
+# Hybrid Mail Router — Postfix main.cf
+# Role: SMTP receive + relay only. NO local mailboxes.
+# Routing: MariaDB `routing` table looked up per recipient.
+# Secrets and host-specific values are applied by entrypoint.sh via postconf.
+# =============================================================================
+
+compatibility_level = 3.6
+
+# --- Identity (overridden at runtime) ---
+smtpd_banner = $myhostname ESMTP Hybrid Mail Router
+biff = no
+append_dot_mydomain = no
+readme_directory = no
+
+# --- Hostname / domain (set by entrypoint) ---
+# myhostname =
+# mydomain =
+myorigin = $mydomain
+
+# --- Pure router: never deliver locally ---
+mydestination =
+local_recipient_maps =
+local_transport = error:local delivery disabled — this host is a mail router only
+mailbox_size_limit = 0
+home_mailbox =
+mailbox_command =
+virtual_mailbox_maps =
+virtual_mailbox_base =
+virtual_uid_maps =
+virtual_gid_maps =
+
+# --- Networks allowed to relay without auth (set by entrypoint) ---
+# mynetworks =
+
+# --- Alias maps (minimal; no local users) ---
+alias_maps = hash:/etc/aliases
+alias_database = hash:/etc/aliases
+
+# --- Recipient routing from MariaDB (every recipient) ---
+# Use proxy:mysql so lookups work when smtpd is chrooted
+relay_domains = proxy:mysql:/etc/postfix/sql/mysql-relay-domains.cf
+relay_recipient_maps = proxy:mysql:/etc/postfix/sql/mysql-relay-recipients.cf
+transport_maps = proxy:mysql:/etc/postfix/sql/mysql-transport.cf
+
+# Do not fall back to DNS MX for unknown routes
+relayhost =
+
+# --- SMTP server restrictions ---
+smtpd_helo_required = yes
+
+smtpd_client_restrictions =
+    permit_mynetworks,
+    reject_unknown_reverse_client_hostname,
+    permit
+
+smtpd_helo_restrictions =
+    permit_mynetworks,
+    reject_invalid_helo_hostname,
+    reject_non_fqdn_helo_hostname,
+    permit
+
+smtpd_sender_restrictions =
+    permit_mynetworks,
+    reject_non_fqdn_sender,
+    reject_unknown_sender_domain,
+    permit
+
+smtpd_recipient_restrictions =
+    permit_mynetworks,
+    reject_non_fqdn_recipient,
+    reject_unknown_recipient_domain,
+    reject_unauth_destination,
+    reject_unlisted_recipient,
+    permit
+
+smtpd_relay_restrictions =
+    permit_mynetworks,
+    reject_unauth_destination
+
+smtpd_data_restrictions =
+    reject_unauth_pipelining,
+    permit
+
+# Unknown recipients rejected via relay_recipient_maps (MariaDB lookup)
+unknown_relay_recipient_reject_code = 550
+
+# --- TLS (incoming); cert paths set by entrypoint when enabled ---
+smtpd_tls_security_level = may
+smtpd_tls_auth_only = no
+smtpd_tls_loglevel = 1
+smtpd_tls_session_cache_database = btree:${data_directory}/smtpd_scache
+smtpd_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
+smtpd_tls_ciphers = high
+smtpd_tls_mandatory_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
+smtpd_tls_exclude_ciphers = aNULL, eNULL, EXPORT, DES, RC4, MD5, PSK, aECDH, EDH-DSS-DES-CBC3-SHA, EDH-RSA-DES-CBC3-SHA, KRB5-DES, DES-CBC3-SHA
+tls_preempt_cipherlist = yes
+
+# --- TLS (outgoing to backends) ---
+smtp_tls_security_level = may
+smtp_tls_loglevel = 1
+smtp_tls_session_cache_database = btree:${data_directory}/smtp_scache
+smtp_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
+smtp_tls_CApath = /etc/ssl/certs
+
+# Submission (587) — see master.cf
+smtpd_sasl_auth_enable = no
+
+# --- Queue & performance ---
+maximal_queue_lifetime = 5d
+bounce_queue_lifetime = 1d
+maximal_backoff_time = 4000s
+minimal_backoff_time = 300s
+queue_run_delay = 300s
+message_size_limit = 52428800
+mailbox_size_limit = 0
+default_destination_concurrency_limit = 20
+smtp_destination_concurrency_limit = 20
+default_process_limit = 100
+
+# Connection limits (abuse protection)
+smtpd_client_connection_count_limit = 50
+smtpd_client_connection_rate_limit = 100
+smtpd_client_message_rate_limit = 100
+anvil_rate_time_unit = 60s
+
+# --- Header hygiene ---
+disable_vrfy_command = yes
+smtpd_delay_reject = yes
+strict_rfc821_envelopes = yes
+
+# --- Logging to stdout for Docker (Postfix 3.4+) ---
+maillog_file = /dev/stdout
+
+# Soft bounce for temporary DB/connectivity issues on lookup failure is handled
+# by mysql map; unknown recipients hard-reject via relay_recipient_maps.
+soft_bounce = no
+
+# --- Misc ---
+inet_interfaces = all
+inet_protocols = ipv4
+recipient_delimiter = +
+html_directory = no
+manpage_directory = /usr/share/man
+sample_directory = /usr/share/doc/postfix/examples
+sendmail_path = /usr/sbin/sendmail
+newaliases_path = /usr/bin/newaliases
+mailq_path = /usr/bin/mailq
+setgid_group = postdrop
