@@ -46,10 +46,19 @@ docker compose ps
 docker compose logs -f postfix
 ```
 
-Adminer: http://127.0.0.1:8080  
+### Coolify
+
+1. Deploy as **Docker Compose** from this repo.
+2. Set env vars (or accept compose defaults for first boot):
+   - `MYSQL_ROOT_PASSWORD`, `MYSQL_PASSWORD`, `MYSQL_DATABASE=mailrouter`, `MYSQL_USER=postfix`
+3. Default SMTP publish ports are **2525** and **2587** (avoids host port 25 conflicts). Set `SMTP_PORT=25` / `SUBMISSION_PORT=587` when the host is free.
+4. If MariaDB was corrupted by an earlier failed deploy, delete the app’s MariaDB volume in Coolify, then redeploy.
+5. Logs: Coolify → Service → Logs, or on the host: `docker ps` then `docker logs <container>`.
+
+Adminer: http://127.0.0.1:8080 (or Coolify domain)  
 - System: **MySQL**  
 - Server: **mariadb**  
-- User / password / database: from `.env`
+- User / password / database: from env
 
 ## Routing table
 

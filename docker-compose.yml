@@ -1,7 +1,6 @@
 # =============================================================================
-# Hybrid Mail Router — Docker Compose (Coolify / production)
-# Stack: Postfix (Ubuntu) + MariaDB + Adminer
-# Role: SMTP receive & relay only — NO local mailboxes
+# Hybrid Mail Router — Docker Compose (Coolify-friendly)
+# Stack: Postfix + MariaDB + Adminer — SMTP relay only (no mailboxes)
 # =============================================================================
 
 services:
@@ -9,31 +8,32 @@ services:
     image: mariadb:11.4
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      # Defaults keep Coolify from crashing when secrets are not set yet.
+      # Change these in Coolify Environment Variables for production.
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-MailRouterRoot_ChangeMe}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-mailrouter}
       MYSQL_USER: ${MYSQL_USER:-postfix}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-MailRouterPostfix_ChangeMe}
       MARIADB_AUTO_UPGRADE: "1"
       TZ: ${TZ:-UTC}
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
-      - --max-connections=200
+      - --max-connections=100
       - --innodb-buffer-pool-size=128M
-      - --innodb-flush-log-at-trx-commit=1
       - --skip-name-resolve
-      - --log-warnings=2
     volumes:
       - mariadb_data:/var/lib/mysql
-      - ./mariadb/init:/docker-entrypoint-initdb.d:ro
+      - ./mariadb/init/01-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
     networks:
       - mailnet
+    # Soft healthcheck — do not block sibling services forever
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
-      interval: 10s
+      interval: 15s
       timeout: 5s
-      retries: 30
-      start_period: 120s
+      retries: 20
+      start_period: 90s
     logging:
       driver: json-file
       options:
@@ -44,7 +44,7 @@ services:
     build:
       context: ./postfix
       dockerfile: Dockerfile
-    image: hybrid-mail-router/postfix:1.0.1
+    image: hybrid-mail-router/postfix:1.0.2
     restart: unless-stopped
     hostname: ${POSTFIX_HOSTNAME:-mail-router.local}
     environment:
@@ -52,40 +52,40 @@ services:
       MYSQL_PORT: "3306"
       MYSQL_DATABASE: ${MYSQL_DATABASE:-mailrouter}
       MYSQL_USER: ${MYSQL_USER:-postfix}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-MailRouterPostfix_ChangeMe}
       POSTFIX_HOSTNAME: ${POSTFIX_HOSTNAME:-mail-router.local}
       POSTFIX_DOMAIN: ${POSTFIX_DOMAIN:-local}
       POSTFIX_MYNETWORKS: ${POSTFIX_MYNETWORKS:-127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
       POSTFIX_SMTPD_BANNER: ${POSTFIX_SMTPD_BANNER:-Hybrid Mail Router ESMTP}
       POSTFIX_MESSAGE_SIZE_LIMIT: ${POSTFIX_MESSAGE_SIZE_LIMIT:-52428800}
       POSTFIX_TLS_ENABLED: ${POSTFIX_TLS_ENABLED:-yes}
-      MYSQL_WAIT_TIMEOUT: ${MYSQL_WAIT_TIMEOUT:-180}
+      # Never exit the container while waiting — keeps Coolify logs visible
+      MYSQL_WAIT_TIMEOUT: ${MYSQL_WAIT_TIMEOUT:-0}
       TZ: ${TZ:-UTC}
     volumes:
       - postfix_spool:/var/spool/postfix
       - postfix_logs:/var/log/mail
       - postfix_certs:/etc/postfix/certs
+    # Use 2525/2587 by default to avoid host port 25 conflicts on Coolify servers.
+    # Map real 25/587 via Coolify ports or set SMTP_PORT=25 SUBMISSION_PORT=587.
     ports:
-      - "${SMTP_PORT:-25}:25"
-      - "${SUBMISSION_PORT:-587}:587"
+      - "${SMTP_PORT:-2525}:25"
+      - "${SUBMISSION_PORT:-2587}:587"
     depends_on:
-      mariadb:
-        condition: service_healthy
+      - mariadb
     networks:
       - mailnet
     healthcheck:
-      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
+      test: ["CMD-SHELL", "postfix status || exit 1"]
       interval: 30s
       timeout: 10s
-      retries: 5
-      start_period: 120s
+      retries: 10
+      start_period: 180s
     logging:
       driver: json-file
       options:
         max-size: "50m"
         max-file: "10"
-    extra_hosts:
-      - "carbonio-mta:${CARBONIO_MTA_IP:-172.20.0.10}"
 
   adminer:
     image: adminer:4.8.1
@@ -95,16 +95,12 @@ services:
       ADMINER_DESIGN: pepa-linha-dark
       TZ: ${TZ:-UTC}
     depends_on:
-      mariadb:
-        condition: service_healthy
+      - mariadb
     networks:
       - mailnet
-    healthcheck:
-      test: ["CMD", "php", "-r", "fsockopen('127.0.0.1', 8080) or exit(1);"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
+    # Coolify will proxy this; optional host publish:
+    ports:
+      - "${ADMINER_PORT:-8080}:8080"
     logging:
       driver: json-file
       options:
